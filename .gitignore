@@ -1,3 +1,6 @@
 __pycache__/
 *.zip
 .vscode/
+dataset/
+runs/
+models/

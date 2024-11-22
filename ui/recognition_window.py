@@ -23,6 +23,7 @@ class RecognitionWindow(QMainWindow):
     def setup_ui(self):
         """设置UI"""
         self.setWindowTitle("手势识别系统")
+        # 2:1
         self.setGeometry(100, 100, 1600, 800)
         
         # 创建中心部件
