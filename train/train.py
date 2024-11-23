@@ -9,88 +9,81 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
-from . import SignLanguageDataset
 from torch.utils.tensorboard import SummaryWriter
 import os
 from datetime import datetime
 
-class ResidualBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, stride=1):
-        super(ResidualBlock, self).__init__()
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, 
-                              stride=stride, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(out_channels)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3,
-                              stride=1, padding=1, bias=False)
-        self.bn2 = nn.BatchNorm2d(out_channels)
-        
-        self.shortcut = nn.Sequential()
-        if stride != 1 or in_channels != out_channels:
-            self.shortcut = nn.Sequential(
-                nn.Conv2d(in_channels, out_channels, kernel_size=1, 
-                         stride=stride, bias=False),
-                nn.BatchNorm2d(out_channels)
-            )
-        
-    def forward(self, x):
-        out = torch.relu(self.bn1(self.conv1(x)))
-        out = self.bn2(self.conv2(out))
-        out += self.shortcut(x)
-        out = torch.relu(out)
-        return out
+from .dataset import SignLanguageDataset
 
 class SignLanguageResNet(nn.Module):
     def __init__(self, num_classes=10):
         super(SignLanguageResNet, self).__init__()
-        # 初始卷积层
-        self.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
-        self.bn1 = nn.BatchNorm2d(64)
-        self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         
-        # ResNet层
-        self.layer1 = self.make_layer(64, 64, 2, stride=1)
-        self.layer2 = self.make_layer(64, 128, 2, stride=2)
-        self.layer3 = self.make_layer(128, 256, 2, stride=2)
+        # 简化网络结构，使用更小的通道数
+        self.features = nn.Sequential(
+            # 第一层卷积
+            nn.Conv2d(1, 8, kernel_size=3, padding=1),
+            nn.BatchNorm2d(8),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+            
+            # 第二层卷积
+            nn.Conv2d(8, 16, kernel_size=3, padding=1),
+            nn.BatchNorm2d(16),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+            
+            # 第三层卷积
+            nn.Conv2d(16, 32, kernel_size=3, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+            
+            # Dropout用于防止过拟合
+            nn.Dropout2d(0.25)
+        )
         
-        # 全局平均池化和分类器
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(256, num_classes)
+        # 计算全连接层的输入维度
+        # 64x64 经过3次MaxPool2d(2)后变成 8x8
+        self.classifier = nn.Sequential(
+            nn.Linear(32 * 8 * 8, 128),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.5),
+            nn.Linear(128, num_classes)
+        )
         
         # 初始化权重
+        self._initialize_weights()
+    
+    def _initialize_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
             elif isinstance(m, nn.BatchNorm2d):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
-    
-    def make_layer(self, in_channels, out_channels, num_blocks, stride):
-        layers = []
-        layers.append(ResidualBlock(in_channels, out_channels, stride))
-        for _ in range(1, num_blocks):
-            layers.append(ResidualBlock(out_channels, out_channels))
-        return nn.Sequential(*layers)
+            elif isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, 0, 0.01)
+                nn.init.constant_(m.bias, 0)
     
     def forward(self, x):
-        x = self.maxpool(self.relu(self.bn1(self.conv1(x))))
-        
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        
-        x = self.avgpool(x)
+        x = self.features(x)
         x = x.view(x.size(0), -1)
-        x = self.fc(x)
+        x = self.classifier(x)
         return x
 
 def train_model(model, train_loader, val_loader, criterion, optimizer, writer, num_epochs=50, device='cuda'):
     model = model.to(device)
     best_val_acc = 0.0
+    patience = 15  # 增加耐心值
+    patience_counter = 0
     
-    # 添加学习率调度器
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', 
-                                                    factor=0.1, patience=5, verbose=True)
+    # 使用更温和的学习率调度器
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='max', factor=0.5, patience=5, verbose=True
+    )
     
     for epoch in range(num_epochs):
         # 训练阶段
@@ -105,10 +98,16 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, writer, n
             optimizer.zero_grad()
             outputs = model(images)
             loss = criterion(outputs, labels)
+            
+            # 减小L2正则化强度
+            l2_lambda = 0.0001
+            l2_norm = sum(p.pow(2.0).sum() for p in model.parameters())
+            loss = loss + l2_lambda * l2_norm
+            
             loss.backward()
             
-            # 梯度裁剪
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            # 更温和的梯度裁剪
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
             
             optimizer.step()
             
@@ -128,22 +127,7 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, writer, n
         train_acc = 100 * correct / total
         
         # 验证阶段
-        model.eval()
-        val_loss = 0.0
-        val_correct = 0
-        val_total = 0
-        
-        with torch.no_grad():
-            for images, labels in val_loader:
-                images, labels = images.to(device), labels.to(device)
-                outputs = model(images)
-                loss = criterion(outputs, labels)
-                val_loss += loss.item()
-                _, predicted = torch.max(outputs.data, 1)
-                val_total += labels.size(0)
-                val_correct += (predicted == labels).sum().item()
-        
-        val_acc = 100 * val_correct / val_total
+        val_acc = validate(model, val_loader, criterion, device)
         
         # 更新学习率
         scheduler.step(val_acc)
@@ -151,7 +135,6 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, writer, n
         # 记录指标
         writer.add_scalar('Training Accuracy', train_acc, epoch)
         writer.add_scalar('Validation Accuracy', val_acc, epoch)
-        writer.add_scalar('Validation Loss', val_loss/len(val_loader), epoch)
         writer.add_scalar('Learning Rate', optimizer.param_groups[0]['lr'], epoch)
         
         print(f'Epoch [{epoch+1}/{num_epochs}]')
@@ -163,16 +146,39 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, writer, n
         # 保存最佳模型
         if val_acc > best_val_acc:
             best_val_acc = val_acc
-            os.makedirs('models', exist_ok=True)
+            patience_counter = 0
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'val_acc': val_acc,
             }, 'models/best_model.pth')
+        else:
+            patience_counter += 1
+            if patience_counter >= patience:
+                print("Early stopping triggered")
+                break
+
+def validate(model, val_loader, criterion, device):
+    """单独的验证函数"""
+    model.eval()
+    val_loss = 0.0
+    val_correct = 0
+    val_total = 0
+    
+    with torch.no_grad():
+        for images, labels in val_loader:
+            images, labels = images.to(device), labels.to(device)
+            outputs = model(images)
+            loss = criterion(outputs, labels)
+            val_loss += loss.item()
+            _, predicted = torch.max(outputs.data, 1)
+            val_total += labels.size(0)
+            val_correct += (predicted == labels).sum().item()
+    
+    return 100 * val_correct / val_total
 
 def main():
-    # 检查GPU
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
     
@@ -189,17 +195,25 @@ def main():
     val_size = len(dataset) - train_size
     train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
     
-    # 创建数据加载器
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
+    # 创建数据加载器，减小batch size
+    train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=16, shuffle=False)
     
     # 初始化模型和训练组件
     model = SignLanguageResNet()
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.AdamW(model.parameters(), lr=0.001, weight_decay=0.01)
+    # 使用更小的学习率
+    optimizer = optim.AdamW(model.parameters(), lr=0.0005, weight_decay=0.001)
+    
+    # 确保models目录存在
+    model_save_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
+    os.makedirs(model_save_dir, exist_ok=True)
+    
+    # 修改模型保存路径
+    model_save_path = os.path.join(model_save_dir, 'best_model.pth')
     
     # 训练模型
-    train_model(model, train_loader, val_loader, criterion, optimizer, writer, num_epochs=50, device=device)
+    train_model(model, train_loader, val_loader, criterion, optimizer, writer, num_epochs=100, device=device)
     
     writer.close()
 
