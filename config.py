@@ -24,7 +24,7 @@ MODEL_CONFIG = {
     'learning_rate': 0.0005,
     'weight_decay': 0.001,
     'num_epochs': 100,
-    'model_save_dir': ROOT_DIR / 'train' / 'models',
+    'model_save_dir': ROOT_DIR / 'models',
     'model_name': 'best_model.pth'
 }
 
@@ -41,4 +41,7 @@ HAND_DETECTION_CONFIG = {
 LOGGING_CONFIG = {
     'level': 'INFO',
     'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-} 
+}
+
+PROJECT_ROOT = Path(__file__).parent.absolute()
+DATASET_PATH = PROJECT_ROOT / "dataset" / "sign-language-digits-dataset" 

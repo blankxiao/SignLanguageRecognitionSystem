@@ -9,17 +9,20 @@ from typing import Optional, Tuple, List
 import cv2
 import torch
 import numpy as np
+from pathlib import Path
 from .gesture_recognizer_base import GestureRecognizerBase
 from train.train import SignLanguageResNet
-from train.hand_detection_cv import HandDetector
+from detection.hand_detection_cv import HandDetector
+from config import MODEL_CONFIG
 
 class CustomRecognizer(GestureRecognizerBase):
-    def __init__(self) -> None:
+    def __init__(self, model_path: Optional[str] = None) -> None:
         super().__init__()
         self.initialized: bool = False
         self.hand_detector: Optional[HandDetector] = None
         self.model: Optional[SignLanguageResNet] = None
         self.device: Optional[torch.device] = None
+        self.model_path = model_path or str(MODEL_CONFIG['model_save_dir'] / MODEL_CONFIG['model_name'])
     
     def initialize(self) -> bool:
         """初始化识别器"""
@@ -33,6 +36,9 @@ class CustomRecognizer(GestureRecognizerBase):
             self.load_model()
             self.model.eval()
             
+            print(f"自定义识别器初始化完成，使用模型: {self.model_path}")
+            print(f"运行设备: {self.device}")
+            
             self.initialized = True
             return True
         except Exception as e:
@@ -42,10 +48,19 @@ class CustomRecognizer(GestureRecognizerBase):
     def load_model(self) -> None:
         """加载训练好的模型"""
         try:
-            checkpoint = torch.load('train/models/best_model.pth', map_location=self.device)
+            if not Path(self.model_path).exists():
+                raise FileNotFoundError(f"模型文件不存在: {self.model_path}")
+                
+            checkpoint = torch.load(self.model_path, map_location=self.device)
             if self.model is not None:
                 self.model.load_state_dict(checkpoint['model_state_dict'])
                 self.model.to(self.device)
+                
+                # 打印模型信息
+                if 'val_acc' in checkpoint:
+                    print(f"模型验证准确率: {checkpoint['val_acc']:.2f}%")
+                if 'metrics' in checkpoint:
+                    print(f"模型F1分数: {np.mean(checkpoint['metrics']['f1']):.4f}")
         except Exception as e:
             raise Exception(f"加载模型失败: {str(e)}")
     
@@ -62,7 +77,7 @@ class CustomRecognizer(GestureRecognizerBase):
         # 转换为灰度图
         gray = cv2.cvtColor(hand_roi, cv2.COLOR_BGR2GRAY)
         
-        # ���加自适应直方图均衡化
+        # 加自适应直方图均衡化
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
         gray = clahe.apply(gray)
         
