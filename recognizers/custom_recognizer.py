@@ -2,10 +2,10 @@
 @Author: blankxiao
 @file: custom_recognizer.py
 @Created: 2024-11-23
-@Desc: 自定义手势识别器，集成手部检测和手势识别
+@Desc: 自定义手势识别器，使用传统CV方法
 """
 
-from typing import Optional, Tuple, List, Union
+from typing import Optional, Tuple, List
 import cv2
 import torch
 import numpy as np
@@ -62,7 +62,7 @@ class CustomRecognizer(GestureRecognizerBase):
         # 转换为灰度图
         gray = cv2.cvtColor(hand_roi, cv2.COLOR_BGR2GRAY)
         
-        # 添加自适应直方图均衡化
+        # ���加自适应直方图均衡化
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
         gray = clahe.apply(gray)
         
@@ -97,17 +97,15 @@ class CustomRecognizer(GestureRecognizerBase):
             result_frame, hand_rois = self.hand_detector.detect_hands(frame)
             
             if not hand_rois:
-                return result_frame, None  # 没有检测到手
+                return result_frame, None
             
             # 对每个检测到的手部区域进行手势识别
             predictions: List[Tuple[int, float]] = []
             for hand_roi in hand_rois:
-                # 预处理ROI
                 tensor = self.preprocess_hand_roi(hand_roi)
                 if self.device is not None:
                     tensor = tensor.to(self.device)
                 
-                # 进行预测
                 if self.model is not None:
                     with torch.no_grad():
                         output = self.model(tensor)
@@ -115,10 +113,9 @@ class CustomRecognizer(GestureRecognizerBase):
                         prediction = torch.argmax(output, dim=1).item()
                         confidence = probabilities.max().item()
                         
-                        if confidence > 0.5:  # 置信度阈值
+                        if confidence > 0.5:
                             predictions.append((prediction, confidence))
             
-            # 如果有多个预测，选择置信度最高的
             if predictions:
                 best_prediction = max(predictions, key=lambda x: x[1])
                 return result_frame, best_prediction[0]

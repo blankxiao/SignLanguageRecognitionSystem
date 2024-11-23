@@ -7,5 +7,6 @@
 
 from .gesture_recognizer_base import GestureRecognizerBase
 from .custom_recognizer import CustomRecognizer
+from .mediapipe_recognizer import MediaPipeRecognizer
 
-__all__ = ['GestureRecognizerBase', 'CustomRecognizer']
+__all__ = ['GestureRecognizerBase', 'CustomRecognizer', 'MediaPipeRecognizer']

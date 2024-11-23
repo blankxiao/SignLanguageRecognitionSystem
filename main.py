@@ -11,6 +11,7 @@ import sys
 from PyQt6.QtWidgets import QApplication
 from ui.recognition_window import RecognitionWindow
 from recognizers.custom_recognizer import CustomRecognizer
+from recognizers.mediapipe_recognizer import MediaPipeRecognizer
 
 def setup_logging() -> None:
     """设置日志配置"""
@@ -28,14 +29,20 @@ def main() -> None:
         # 创建应用
         app = QApplication(sys.argv)
         
-        # 初始化识别器
-        logger.info("初始化识别器...")
-        recognizer = CustomRecognizer()
-        if not recognizer.initialize():
-            raise RuntimeError("识别器初始化失败")
+        # 初始化MediaPipe识别器
+        logger.info("初始化MediaPipe识别器...")
+        mp_recognizer = MediaPipeRecognizer()
+        if not mp_recognizer.initialize():
+            raise RuntimeError("MediaPipe识别器初始化失败")
+            
+        # 初始化自定义识别器
+        logger.info("初始化自定义识别器...")
+        custom_recognizer = CustomRecognizer()
+        if not custom_recognizer.initialize():
+            raise RuntimeError("自定义识别器初始化失败")
         
-        # 创建主窗口
-        window = RecognitionWindow(recognizer)
+        # 创建主窗口，传入两个识别器（注意顺序：MediaPipe在前，自定义在后）
+        window = RecognitionWindow(mp_recognizer, custom_recognizer)
         window.show()
         
         # 运行应用

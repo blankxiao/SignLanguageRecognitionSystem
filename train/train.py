@@ -15,7 +15,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from .dataset import SignLanguageDataset
+from train.dataset import SignLanguageDataset
 
 class SignLanguageResNet(nn.Module):
     def __init__(self, num_classes: int = 10) -> None:
