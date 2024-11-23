@@ -5,6 +5,7 @@
 @Desc: 测试训练好的手势识别模型
 """
 
+from typing import Tuple, Optional
 import sys
 import os
 import cv2
@@ -12,12 +13,9 @@ import torch
 import numpy as np
 from pathlib import Path
 
-# 添加项目根目录到Python路径
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from train.train import SignLanguageResNet
 
-def load_model(model_path):
+def load_model(model_path: str) -> Tuple[SignLanguageResNet, torch.device]:
     """加载训练好的模型"""
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"模型文件不存在: {model_path}")
@@ -42,7 +40,7 @@ def load_model(model_path):
     except Exception as e:
         raise Exception(f"加载模型时出错: {str(e)}")
 
-def preprocess_image(image_path):
+def preprocess_image(image_path: str) -> Tuple[torch.Tensor, np.ndarray]:
     """预处理图像"""
     # 读取图像
     img = cv2.imread(image_path)
@@ -72,7 +70,11 @@ def preprocess_image(image_path):
     tensor = torch.from_numpy(normalized).unsqueeze(0).unsqueeze(0)
     return tensor, img
 
-def predict(model, image_tensor, device):
+def predict(
+    model: SignLanguageResNet,
+    image_tensor: torch.Tensor,
+    device: torch.device
+) -> Tuple[int, float]:
     """使用模型进行预测"""
     image_tensor = image_tensor.to(device)
     with torch.no_grad():

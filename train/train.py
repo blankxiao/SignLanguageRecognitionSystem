@@ -5,6 +5,7 @@
 @Desc: 训练模型
 """
 
+from typing import Optional, Tuple, Dict, Any
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -12,12 +13,13 @@ from torch.utils.data import DataLoader, random_split
 from torch.utils.tensorboard import SummaryWriter
 import os
 from datetime import datetime
+from pathlib import Path
 
 from .dataset import SignLanguageDataset
 
 class SignLanguageResNet(nn.Module):
-    def __init__(self, num_classes=10):
-        super(SignLanguageResNet, self).__init__()
+    def __init__(self, num_classes: int = 10) -> None:
+        super().__init__()
         
         # 简化网络结构，使用更小的通道数
         self.features = nn.Sequential(
@@ -68,13 +70,22 @@ class SignLanguageResNet(nn.Module):
                 nn.init.normal_(m.weight, 0, 0.01)
                 nn.init.constant_(m.bias, 0)
     
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.features(x)
         x = x.view(x.size(0), -1)
         x = self.classifier(x)
         return x
 
-def train_model(model, train_loader, val_loader, criterion, optimizer, writer, num_epochs=50, device='cuda'):
+def train_model(
+    model: nn.Module,
+    train_loader: DataLoader,
+    val_loader: DataLoader,
+    criterion: nn.Module,
+    optimizer: optim.Optimizer,
+    writer: SummaryWriter,
+    num_epochs: int = 50,
+    device: str = 'cuda'
+) -> None:
     model = model.to(device)
     best_val_acc = 0.0
     patience = 15  # 增加耐心值
@@ -159,7 +170,12 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, writer, n
                 print("Early stopping triggered")
                 break
 
-def validate(model, val_loader, criterion, device):
+def validate(
+    model: nn.Module,
+    val_loader: DataLoader,
+    criterion: nn.Module,
+    device: str
+) -> float:
     """单独的验证函数"""
     model.eval()
     val_loss = 0.0

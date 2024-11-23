@@ -5,39 +5,43 @@
 @Desc: 数据集处理
 """
 
+from typing import Tuple, Dict, Any
 import torch
 from torch.utils.data import Dataset
 from torchvision import transforms
 import numpy as np
 
 class SignLanguageDataset(Dataset):
-    def __init__(self, data_dir, transform=None):
+    def __init__(self, data_dir: str, transform: transforms.Compose = None) -> None:
         self.transform = transform if transform else transforms.Compose([
             transforms.ToTensor(),
         ])
         
         # 标签映射关系
-        self.label_map = {0: 9, 1: 0, 2: 7, 3: 6, 4: 1, 5: 8, 6: 4, 7: 3, 8: 2, 9: 5}
+        self.label_map: Dict[int, int] = {
+            0: 9, 1: 0, 2: 7, 3: 6, 4: 1, 
+            5: 8, 6: 4, 7: 3, 8: 2, 9: 5
+        }
         
-        # 直接加载.npy文件
-        self.data = np.load(f"{data_dir}/X.npy")  # shape: (2062, 64, 64)
-        labels = np.load(f"{data_dir}/Y.npy")     # shape: (2062, 10)
+        # 加载数据
+        self.data: np.ndarray = np.load(f"{data_dir}/X.npy")  # shape: (2062, 64, 64)
+        labels: np.ndarray = np.load(f"{data_dir}/Y.npy")     # shape: (2062, 10)
         
         # 将one-hot编码转换为单个数字标签
-        self.labels = np.argmax(labels, axis=1)
+        self.labels: np.ndarray = np.argmax(labels, axis=1)
         
         # 应用标签映射
         self.labels = np.vectorize(self.label_map.get)(self.labels)
         
-        # 打印一些数据统计信息用于调试
+        # 打印数据统计信息
         print(f"数据集大小: {len(self.data)}")
         print(f"标签分布: {np.unique(self.labels, return_counts=True)}")
         print(f"图像值范围: [{self.data.min()}, {self.data.max()}]")
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.data)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         image = self.data[idx]
         label = self.labels[idx]
         

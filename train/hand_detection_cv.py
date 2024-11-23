@@ -5,24 +5,33 @@
 @Desc: 使用传统计算机视觉方法实现手部检测
 """
 
+from typing import List, Tuple, Optional
 import cv2
 import numpy as np
 
 class HandDetector:
-    def __init__(self):
+    def __init__(self) -> None:
         # 肤色检测的YCrCb阈值
-        self.min_YCrCb = np.array([0, 133, 77], np.uint8)
-        self.max_YCrCb = np.array([255, 173, 127], np.uint8)
+        self.min_YCrCb: np.ndarray = np.array([0, 133, 77], np.uint8)
+        self.max_YCrCb: np.ndarray = np.array([255, 173, 127], np.uint8)
         
         # 形态学操作的核
-        self.kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        self.kernel: np.ndarray = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
         
         # 最小和最大手部面积（用于过滤区域）
-        self.min_hand_area = 5000  # 可以根据实际情况调整
-        self.max_hand_area = 50000  # 添加最大面积限制
+        self.min_hand_area: int = 5000
+        self.max_hand_area: int = 50000
     
-    def detect_skin(self, image):
-        """使用YCrCb颜色空间检测皮肤"""
+    def detect_skin(self, image: np.ndarray) -> np.ndarray:
+        """
+        使用YCrCb颜色空间检测皮肤
+        
+        Args:
+            image: BGR格式的输入图像
+            
+        Returns:
+            二值化的皮肤掩码
+        """
         # 转换到YCrCb颜色空间
         ycrcb_image = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
         
@@ -35,8 +44,16 @@ class HandDetector:
         
         return skin_mask
     
-    def find_hand_contours(self, mask):
-        """找到所有可能的手部轮廓"""
+    def find_hand_contours(self, mask: np.ndarray) -> List[np.ndarray]:
+        """
+        找到所有可能的手部轮廓
+        
+        Args:
+            mask: 二值化掩码图像
+            
+        Returns:
+            符合面积条件的轮廓列表
+        """
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
         # 过滤并保留合适大小的轮廓
@@ -48,8 +65,16 @@ class HandDetector:
         
         return hand_contours
     
-    def detect_hands(self, image):
-        """检测多个手部"""
+    def detect_hands(self, image: np.ndarray) -> Tuple[np.ndarray, List[np.ndarray]]:
+        """
+        检测多个手部
+        
+        Args:
+            image: BGR格式的输入图像
+            
+        Returns:
+            Tuple[标注后的图像, 手部ROI列表]
+        """
         # 复制输入图像
         result = image.copy()
         
@@ -60,7 +85,7 @@ class HandDetector:
         hand_contours = self.find_hand_contours(skin_mask)
         
         # 存储所有手部ROI
-        hand_rois = []
+        hand_rois: List[np.ndarray] = []
         
         # 处理每个检测到的手部区域
         for i, contour in enumerate(hand_contours):
@@ -86,7 +111,8 @@ class HandDetector:
         
         return result, hand_rois
 
-def main():
+def main() -> None:
+    """主函数，用于测试手部检测器"""
     # 创建检测器
     detector = HandDetector()
     
