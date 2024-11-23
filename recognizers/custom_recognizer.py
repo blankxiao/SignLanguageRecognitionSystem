@@ -128,8 +128,8 @@ class CustomRecognizer(GestureRecognizerBase):
                         prediction = torch.argmax(output, dim=1).item()
                         confidence = probabilities.max().item()
                         
-                        if confidence > 0.5:
-                            predictions.append((prediction, confidence))
+                        # if confidence > 0.5:
+                        predictions.append((prediction, confidence))
             
             if predictions:
                 best_prediction = max(predictions, key=lambda x: x[1])

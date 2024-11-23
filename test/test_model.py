@@ -5,198 +5,162 @@
 @Desc: 测试训练好的手势识别模型
 """
 
-import argparse
-from typing import Tuple, Optional, Dict
-import sys
-import os
-import cv2
 import torch
-import numpy as np
 from pathlib import Path
-from sklearn.metrics import precision_recall_fscore_support, confusion_matrix, classification_report
+import cv2
+import numpy as np
+from torch.utils.data import DataLoader, Subset
+from sklearn.metrics import confusion_matrix, classification_report
 import matplotlib.pyplot as plt
 import seaborn as sns
+import random
 
 from train.train import SignLanguageResNet
-from config import MODEL_CONFIG
+from train.dataset import SignLanguageDataset
+from config import DATASET_CONFIG, MODEL_CONFIG, TEST_CONFIG
 
-def parse_args():
-    """解析命令行参数"""
-    parser = argparse.ArgumentParser(description='手语识别模型测试脚本')
-    
-    # 模型相关参数
-    parser.add_argument('--model-path', type=str,
-                      default=str(MODEL_CONFIG['model_save_dir'] / MODEL_CONFIG['model_name']),
-                      help='模型文件路径')
-    parser.add_argument('--test-dir', type=str,
-                      default='test/testimg',
-                      help='测试图像目录')
-    
-    # 测试相关参数
-    parser.add_argument('--batch-size', type=int, default=1,
-                      help='批处理大小')
-    parser.add_argument('--device', type=str,
-                      choices=['cuda', 'cpu'], default='cuda',
-                      help='使用设备')
-    parser.add_argument('--save-results', action='store_true',
-                      help='是否保存测试结果')
-    parser.add_argument('--output-dir', type=str,
-                      default='test_results',
-                      help='测试结果保存目录')
-    parser.add_argument('--show-images', action='store_true',
-                      help='是否显示测试图像')
-    
-    return parser.parse_args()
+def load_model(model_path):
+    """加载训练好的模型"""
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = SignLanguageResNet().to(device)
+    checkpoint = torch.load(model_path, map_location=device)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model.eval()
+    return model, device
 
-def save_test_results(
-    predictions: list,
-    confidences: list,
-    image_paths: list,
-    output_dir: str,
-    metrics: Optional[Dict] = None
-):
-    """保存测试结果"""
-    os.makedirs(output_dir, exist_ok=True)
+def test_on_dataset(model, test_loader, device):
+    """在测试集上评估模型"""
+    all_preds = []
+    all_labels = []
+    all_confidences = []
+    correct = 0
+    total = 0
     
-    # 保存预测结果
-    with open(os.path.join(output_dir, 'test_results.txt'), 'w') as f:
-        f.write("测试结果报告\n")
-        f.write("=" * 50 + "\n\n")
-        
-        for img_path, pred, conf in zip(image_paths, predictions, confidences):
-            f.write(f"图像: {os.path.basename(img_path)}\n")
-            f.write(f"预测类别: {pred}\n")
-            f.write(f"置信度: {conf:.4f}\n")
-            f.write("-" * 30 + "\n")
-        
-        # 如果有评估指标，也保存它们
-        if metrics:
-            f.write("\n性能评估指标:\n")
-            f.write("=" * 50 + "\n")
-            f.write(f"分类报告:\n{metrics['classification_report']}\n")
+    with torch.no_grad():
+        for images, labels in test_loader:
+            images = images.to(device)
+            labels = labels.to(device)
+            outputs = model(images)
             
-            # 保存每个类别的详细指标
-            f.write("\n每个类别的详细指标:\n")
-            for i in range(len(metrics['precision'])):
-                f.write(f"\n类别 {i}:\n")
-                f.write(f"精确率: {metrics['precision'][i]:.4f}\n")
-                f.write(f"召回率: {metrics['recall'][i]:.4f}\n")
-                f.write(f"F1分数: {metrics['f1'][i]:.4f}\n")
-                f.write(f"支持度: {metrics['support'][i]}\n")
+            # 计算置信度
+            probs = torch.softmax(outputs, dim=1)
+            confidence, predicted = torch.max(probs, dim=1)
+            
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+            
+            all_preds.extend(predicted.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
+            all_confidences.extend(confidence.cpu().numpy())
+    
+    accuracy = 100 * correct / total
+    return accuracy, all_preds, all_labels, all_confidences
 
-def plot_and_save_confusion_matrix(conf_matrix: np.ndarray, save_path: str):
+def plot_confusion_matrix(y_true, y_pred, save_path):
     """绘制并保存混淆矩阵"""
+    cm = confusion_matrix(y_true, y_pred)
     plt.figure(figsize=(10, 8))
-    sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues')
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
     plt.title('Confusion Matrix')
     plt.ylabel('True Label')
     plt.xlabel('Predicted Label')
-    plt.tight_layout()
     plt.savefig(save_path)
     plt.close()
 
-def load_model(model_path: str, device: str) -> Tuple[SignLanguageResNet, torch.device]:
-    """加载训练好的模型"""
-    if not os.path.exists(model_path):
-        raise FileNotFoundError(f"模型文件不存在: {model_path}")
+def analyze_errors(model, test_loader, device, save_dir):
+    """分析错误预测的案例"""
+    save_dir = Path(save_dir)
+    save_dir.mkdir(parents=True, exist_ok=True)
     
-    device = torch.device(device if torch.cuda.is_available() and device == 'cuda' else 'cpu')
-    model = SignLanguageResNet()
+    error_cases = []
+    with torch.no_grad():
+        for batch_idx, (images, labels) in enumerate(test_loader):
+            images = images.to(device)
+            labels = labels.to(device)
+            outputs = model(images)
+            
+            probs = torch.softmax(outputs, dim=1)
+            confidence, predicted = torch.max(probs, dim=1)
+            
+            # 找出预测错误的样本
+            errors = predicted != labels
+            for i in range(len(errors)):
+                if errors[i]:
+                    error_cases.append({
+                        'image': images[i].cpu().numpy(),
+                        'true_label': labels[i].item(),
+                        'predicted': predicted[i].item(),
+                        'confidence': confidence[i].item()
+                    })
     
-    try:
-        checkpoint = torch.load(model_path, map_location=device)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        print(f"模型加载自: {model_path}")
-        print(f"验证准确率: {checkpoint.get('val_acc', 'N/A')}")
-        if 'metrics' in checkpoint:
-            print("模型评估指标:")
-            print(f"F1分数: {np.mean(checkpoint['metrics']['f1']):.4f}")
-        
-        model.to(device)
-        model.eval()
-        return model, device
-    except Exception as e:
-        raise Exception(f"加载模型时出错: {str(e)}")
+    # 保存错误案例分析报告
+    with open(save_dir / 'error_analysis.txt', 'w') as f:
+        f.write(f"Total error cases: {len(error_cases)}\n\n")
+        for i, case in enumerate(error_cases):
+            f.write(f"Case {i+1}:\n")
+            f.write(f"True label: {case['true_label']}\n")
+            f.write(f"Predicted: {case['predicted']}\n")
+            f.write(f"Confidence: {case['confidence']:.4f}\n")
+            f.write("-" * 50 + "\n")
+    
+    return error_cases
 
 def main():
-    args = parse_args()
+    # 加载模型
+    model_path = MODEL_CONFIG['model_save_dir'] / MODEL_CONFIG['model_name']
+    model, device = load_model(model_path)
+    print(f"Loaded model from {model_path}")
     
-    try:
-        # 加载模型
-        print("加载模型...")
-        model, device = load_model(args.model_path, args.device)
-        
-        # 获取测试图像列表
-        test_dir = Path(args.test_dir)
-        test_images = list(test_dir.glob('*.jpg')) + list(test_dir.glob('*.png'))
-        
-        if not test_images:
-            print(f"在 {test_dir} 目录下没有找到测试图像")
-            return
-        
-        # 存储预测结果
-        predictions = []
-        confidences = []
-        true_labels = []  # 如果有真实标签的话
-        
-        # 处理每张测试图像
-        for img_path in test_images:
-            print(f"\n处理图像: {img_path.name}")
-            
-            # 预处理图像
-            image_tensor, original_img = preprocess_image(str(img_path))
-            
-            # 进行预测
-            prediction, confidence = predict(model, image_tensor, device)
-            predictions.append(prediction)
-            confidences.append(confidence)
-            
-            # 如果需要显示图像
-            if args.show_images:
-                result_img = original_img.copy()
-                cv2.putText(result_img, f"Pred: {prediction} ({confidence:.2f})", 
-                           (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                cv2.imshow('Result', result_img)
-                key = cv2.waitKey(0)
-                if key == ord('q'):
-                    break
-        
-        # 如果需要保存结果
-        if args.save_results:
-            # 计算评估指标（如果有真实标签）
-            metrics = None
-            if true_labels:
-                metrics = {
-                    'precision': precision_recall_fscore_support(true_labels, predictions)[0],
-                    'recall': precision_recall_fscore_support(true_labels, predictions)[1],
-                    'f1': precision_recall_fscore_support(true_labels, predictions)[2],
-                    'support': precision_recall_fscore_support(true_labels, predictions)[3],
-                    'confusion_matrix': confusion_matrix(true_labels, predictions),
-                    'classification_report': classification_report(true_labels, predictions)
-                }
-                
-                # 保存混淆矩阵
-                plot_and_save_confusion_matrix(
-                    metrics['confusion_matrix'],
-                    os.path.join(args.output_dir, 'confusion_matrix.png')
-                )
-            
-            # 保存测试结果
-            save_test_results(
-                predictions=predictions,
-                confidences=confidences,
-                image_paths=[str(p) for p in test_images],
-                output_dir=args.output_dir,
-                metrics=metrics
-            )
-            
-            print(f"\n测试结果已保存到: {args.output_dir}")
+    # 创建测试数据集
+    dataset = SignLanguageDataset(data_dir=str(DATASET_CONFIG['data_dir']))
     
-    except Exception as e:
-        print(f"测试过程中出错: {str(e)}")
-    finally:
-        if args.show_images:
-            cv2.destroyAllWindows()
+    # 随机选择20%的数据作为测试集
+    test_size = int(0.2 * len(dataset))
+    indices = list(range(len(dataset)))
+    random.shuffle(indices)
+    test_indices = indices[:test_size]
+    
+    test_dataset = Subset(dataset, test_indices)
+    test_loader = DataLoader(
+        test_dataset, 
+        batch_size=TEST_CONFIG['test_batch_size'],
+        shuffle=False,
+        num_workers=0
+    )
+    
+    # 在测试集上评估
+    accuracy, all_preds, all_labels, all_confidences = test_on_dataset(
+        model, test_loader, device
+    )
+    print(f"\nTest Results:")
+    print(f"Overall Accuracy: {accuracy:.2f}%")
+    print(f"Average Confidence: {np.mean(all_confidences):.4f}")
+    
+    # 打印详细的分类报告
+    print("\nClassification Report:")
+    print(classification_report(all_labels, all_preds))
+    
+    # 确保error_cases目录存在
+    error_cases_dir = Path(TEST_CONFIG['error_cases_dir'])
+    error_cases_dir.mkdir(parents=True, exist_ok=True)
+    
+    # 绘制混淆矩阵
+    plot_confusion_matrix(
+        all_labels, 
+        all_preds, 
+        save_path=error_cases_dir / 'confusion_matrix.png'
+    )
+    
+    # 分析错误案例
+    if TEST_CONFIG['save_error_cases']:
+        error_cases = analyze_errors(
+            model,
+            test_loader,
+            device,
+            error_cases_dir
+        )
+        print(f"\nFound {len(error_cases)} error cases.")
+        print(f"Error analysis saved to {error_cases_dir}")
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main() 

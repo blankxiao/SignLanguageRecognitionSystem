@@ -10,13 +10,10 @@ import torch
 from torch.utils.data import Dataset
 from torchvision import transforms
 import numpy as np
+from PIL import Image
 
 class SignLanguageDataset(Dataset):
     def __init__(self, data_dir: str, transform: transforms.Compose = None) -> None:
-        self.transform = transform if transform else transforms.Compose([
-            transforms.ToTensor(),
-        ])
-        
         # 标签映射关系
         self.label_map: Dict[int, int] = {
             0: 9, 1: 0, 2: 7, 3: 6, 4: 1, 
@@ -33,6 +30,20 @@ class SignLanguageDataset(Dataset):
         # 应用标签映射
         self.labels = np.vectorize(self.label_map.get)(self.labels)
         
+        # 更温和的数据增强策略
+        self.transform = transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.RandomRotation(15),  # 减小旋转角度
+            transforms.RandomAffine(
+                degrees=0,
+                translate=(0.1, 0.1),  # 减小平移范围
+                scale=(0.9, 1.1),      # 减小缩放范围
+            ),
+            transforms.RandomHorizontalFlip(p=0.3),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.5], std=[0.5])  # 添加标准化
+        ]) if transform is None else transform
+        
         # 打印数据统计信息
         print(f"数据集大小: {len(self.data)}")
         print(f"标签分布: {np.unique(self.labels, return_counts=True)}")
@@ -42,16 +53,19 @@ class SignLanguageDataset(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        # 获取图像和标签
         image = self.data[idx]
         label = self.labels[idx]
         
-        # 确保数据是正确的形状 (1, 64, 64)
-        if len(image.shape) == 2:
-            image = image[np.newaxis, ...]
-            
-        # 转换为torch tensor并归一化到[0,1]
-        image = torch.from_numpy(image).float() / 255.0
-        # 将标签转换为LongTensor类型
+        # 确保图像是2D的
+        if len(image.shape) == 3:
+            image = image.squeeze()
+        
+        # 应用数据增强
+        if self.transform:
+            image = self.transform(image)
+        
+        # 将标签转换为tensor
         label = torch.tensor(label, dtype=torch.long)
         
         return image, label 
