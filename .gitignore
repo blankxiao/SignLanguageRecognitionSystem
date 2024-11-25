@@ -3,5 +3,5 @@ __pycache__/
 .vscode/
 dataset/
 runs/
+test/model_visualization/
 models/
-test/

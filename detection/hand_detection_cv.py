@@ -12,6 +12,7 @@ import numpy as np
 class HandDetector:
     def __init__(self) -> None:
         # 肤色检测的YCrCb阈值
+        # 分别为 亮度 红色分量 蓝色分量
         self.min_YCrCb: np.ndarray = np.array([0, 133, 77], np.uint8)
         self.max_YCrCb: np.ndarray = np.array([255, 173, 127], np.uint8)
         
@@ -32,13 +33,13 @@ class HandDetector:
         Returns:
             二值化的皮肤掩码
         """
-        # 转换到YCrCb颜色空间
+        # 转换到YCrCb空间
         ycrcb_image = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
         
-        # 创建皮肤掩码
+        # 皮肤掩码：将在YCrCb阈值范围内的像素置为255，范围外的像素置为0
         skin_mask = cv2.inRange(ycrcb_image, self.min_YCrCb, self.max_YCrCb)
         
-        # 形态学操作改善掩码
+        # 形态学操作改善掩码 即腐蚀和膨胀
         skin_mask = cv2.erode(skin_mask, self.kernel, iterations=2)
         skin_mask = cv2.dilate(skin_mask, self.kernel, iterations=2)
         

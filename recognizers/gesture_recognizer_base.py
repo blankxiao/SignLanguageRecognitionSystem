@@ -14,7 +14,7 @@ class GestureRecognizerBase(ABC):
     
     def __init__(self) -> None:
         """初始化基类"""
-        self.is_running: bool = False
+        pass
     
     @abstractmethod
     def initialize(self) -> bool:
@@ -40,14 +40,6 @@ class GestureRecognizerBase(ABC):
                 - 识别结果：如果识别成功返回手势类别，否则返回None
         """
         pass
-    
-    def start(self) -> None:
-        """启动识别器"""
-        self.is_running = True
-    
-    def stop(self) -> None:
-        """停止识别器"""
-        self.is_running = False
     
     @abstractmethod
     def release(self) -> None:

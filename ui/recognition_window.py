@@ -23,14 +23,14 @@ class RecognitionWindow(QMainWindow):
     def setup_ui(self):
         """设置UI"""
         self.setWindowTitle("手势识别系统")
-        # 2:1
+        # 出现在屏幕左上角(100, 100)的位置
         self.setGeometry(100, 100, 1600, 800)
         
-        # 创建中心部件
+        # 中心部件
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         
-        # 创建主布局
+        # 主布局
         main_layout = QHBoxLayout()
         main_layout.setSpacing(20)
         main_layout.setContentsMargins(20, 20, 20, 20)
@@ -62,7 +62,7 @@ class RecognitionWindow(QMainWindow):
         
         main_layout.addWidget(mediapipe_container)
         
-        # 自定义识别器部分（如果启用）
+        # 自定义识别器部分
         if self.custom_recognizer:
             custom_container = QWidget()
             custom_layout = QVBoxLayout(custom_container)
@@ -96,17 +96,19 @@ class RecognitionWindow(QMainWindow):
             logger.error("无法打开摄像头")
             return
         
+        # 设置定时器 更新帧
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_frame)
         self.timer.start(30)  # 30ms 约等于 33fps
         
-        # 启动识别器
-        self.mediapipe_recognizer.start()
+        # 初始化识别器
+        self.mediapipe_recognizer.initialize()
         if self.custom_recognizer:
-            self.custom_recognizer.start()
+            self.custom_recognizer.initialize()
     
     def update_frame(self):
         """更新视频帧"""
+        # 读取帧
         ret, frame = self.camera.read()
         if not ret:
             return
@@ -124,6 +126,7 @@ class RecognitionWindow(QMainWindow):
     
     def display_frame(self, frame, label):
         """在标签上显示图像帧"""
+        # 转换为RGB格式
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         h, w, ch = rgb_frame.shape
         bytes_per_line = ch * w
@@ -140,3 +143,9 @@ class RecognitionWindow(QMainWindow):
         if self.timer:
             self.timer.stop()
         super().closeEvent(event) 
+
+    def toggle_recognition(self):
+        if self.recognizer.toggle():
+            self.status_label.setText("识别已启动")
+        else:
+            self.status_label.setText("识别已停止") 

@@ -14,14 +14,21 @@ from .gesture_recognizer_base import GestureRecognizerBase
 from train.train import SignLanguageResNet
 from detection.hand_detection_cv import HandDetector
 from config import MODEL_CONFIG
+import logging
+import os
+
+logger = logging.getLogger(__name__)
 
 class CustomRecognizer(GestureRecognizerBase):
     def __init__(self, model_path: Optional[str] = None) -> None:
         super().__init__()
         self.initialized: bool = False
+        # 手部识别
         self.hand_detector: Optional[HandDetector] = None
+        # 模型
         self.model: Optional[SignLanguageResNet] = None
         self.device: Optional[torch.device] = None
+        # 模型路径
         self.model_path = model_path or str(MODEL_CONFIG['model_save_dir'] / MODEL_CONFIG['model_name'])
     
     def initialize(self) -> bool:
@@ -36,13 +43,13 @@ class CustomRecognizer(GestureRecognizerBase):
             self.load_model()
             self.model.eval()
             
-            print(f"自定义识别器初始化完成，使用模型: {self.model_path}")
-            print(f"运行设备: {self.device}")
+            logger.info(f"自定义识别器初始化完成，使用模型: {self.model_path}")
+            logger.info(f"运行设备: {self.device}")
             
             self.initialized = True
             return True
         except Exception as e:
-            print(f"初始化失败: {str(e)}")
+            logger.error(f"自定义识别器初始化失败: {str(e)}")
             return False
     
     def load_model(self) -> None:
@@ -58,9 +65,9 @@ class CustomRecognizer(GestureRecognizerBase):
                 
                 # 打印模型信息
                 if 'val_acc' in checkpoint:
-                    print(f"模型验证准确率: {checkpoint['val_acc']:.2f}%")
+                    logger.info(f"模型验证准确率: {checkpoint['val_acc']:.2f}%")
                 if 'metrics' in checkpoint:
-                    print(f"模型F1分数: {np.mean(checkpoint['metrics']['f1']):.4f}")
+                    logger.info(f"模型F1分数: {np.mean(checkpoint['metrics']['f1']):.4f}")
         except Exception as e:
             raise Exception(f"加载模型失败: {str(e)}")
     
@@ -112,6 +119,7 @@ class CustomRecognizer(GestureRecognizerBase):
             result_frame, hand_rois = self.hand_detector.detect_hands(frame)
             
             if not hand_rois:
+                # 没有检测到手
                 return result_frame, None
             
             # 对每个检测到的手部区域进行手势识别
@@ -128,17 +136,18 @@ class CustomRecognizer(GestureRecognizerBase):
                         prediction = torch.argmax(output, dim=1).item()
                         confidence = probabilities.max().item()
                         
-                        # if confidence > 0.5:
                         predictions.append((prediction, confidence))
             
             if predictions:
+                # 选择最大可能的预测
                 best_prediction = max(predictions, key=lambda x: x[1])
                 return result_frame, best_prediction[0]
-            
+
+            # 预测出错
             return result_frame, None
             
         except Exception as e:
-            print(f"处理帧时出错: {str(e)}")
+            logger.error(f"处理帧时出错: {str(e)}")
             return frame, None
     
     def release(self) -> None:

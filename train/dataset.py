@@ -30,14 +30,14 @@ class SignLanguageDataset(Dataset):
         # 应用标签映射
         self.labels = np.vectorize(self.label_map.get)(self.labels)
         
-        # 更温和的数据增强策略
+        # 数据增强
         self.transform = transforms.Compose([
             transforms.ToPILImage(),
-            transforms.RandomRotation(15),  # 减小旋转角度
+            transforms.RandomRotation(15),  # 旋转角度
             transforms.RandomAffine(
                 degrees=0,
-                translate=(0.1, 0.1),  # 减小平移范围
-                scale=(0.9, 1.1),      # 减小缩放范围
+                translate=(0.1, 0.1),  # 平移范围
+                scale=(0.9, 1.1),      # 缩放范围
             ),
             transforms.RandomHorizontalFlip(p=0.3),
             transforms.ToTensor(),

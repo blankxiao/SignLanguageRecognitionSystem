@@ -26,66 +26,12 @@ import json
 from .dataset import SignLanguageDataset
 from config import DATASET_CONFIG, MODEL_CONFIG
 
-class SignLanguageResNet(nn.Module):
-    def __init__(self, num_classes: int = 10) -> None:
-        super().__init__()
-        
-        self.features = nn.Sequential(
-            # 第一层卷积
-            nn.Conv2d(1, 8, kernel_size=3, padding=1),
-            nn.BatchNorm2d(8),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2),
-            
-            # 第二层卷积
-            nn.Conv2d(8, 16, kernel_size=3, padding=1),
-            nn.BatchNorm2d(16),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2),
-            
-            # 第三层卷积
-            nn.Conv2d(16, 32, kernel_size=3, padding=1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2),
-            
-            nn.Dropout2d(0.25)
-        )
-        
-        self.classifier = nn.Sequential(
-            nn.Linear(32 * 8 * 8, 128),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.5),
-            nn.Linear(128, num_classes)
-        )
-        
-        self._initialize_weights()
-    
-    def _initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-                if hasattr(m, 'bias') and m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                if hasattr(m, 'bias') and m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.Linear):
-                nn.init.normal_(m.weight, 0, 0.01)
-                if hasattr(m, 'bias') and m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.features(x)
-        x = x.view(x.size(0), -1)
-        x = self.classifier(x)
-        return x
-
 class SEBlock(nn.Module):
-    """Squeeze-and-Excitation块"""
+    """
+    Squeeze-and-Excitation Block
+    """
     def __init__(self, channel, reduction=16):
-        super().__init__()
+        super(SEBlock, self).__init__()
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
         self.fc = nn.Sequential(
             nn.Linear(channel, channel // reduction, bias=False),
@@ -99,6 +45,88 @@ class SEBlock(nn.Module):
         y = self.avg_pool(x).view(b, c)
         y = self.fc(y).view(b, c, 1, 1)
         return x * y.expand_as(x)
+
+class SignLanguageResNet(nn.Module):
+    """
+    手语识别的改进ResNet模型
+    - 使用较浅的网络结构以适应实时性要求
+    - 添加Dropout层防止过拟合
+    - 使用BatchNorm提升训练稳定性
+    """
+    def __init__(self, num_classes: int = 10) -> None:
+        super().__init__()
+        
+        # 特征提取部分
+        self.features = nn.Sequential(
+            # 第一层卷积：1->32通道，增加初始特征图数量
+            nn.Conv2d(1, 32, kernel_size=3, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+            
+            # 第二层卷积：32->64通道
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+            
+            # 添加注意力机制，增强关键区域的特征
+            SEBlock(64),
+            
+            # 第三层卷积：64->128通道
+            nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+            
+            # 再次添加注意力机制
+            SEBlock(128),
+            
+            nn.Dropout2d(0.25)
+        )
+        
+        # 分类器部分 - 增加网络容量
+        self.classifier = nn.Sequential(
+            nn.Linear(128 * 8 * 8, 512),  # 增加隐层维度
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.5),
+            nn.Linear(512, 256),  # 添加一层
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.3),
+            nn.Linear(256, num_classes)
+        )
+        
+        # 初始化网络权重
+        self._initialize_weights()
+    
+    def _initialize_weights(self):
+        """
+        使用kaiming初始化卷积层，常数初始化BN层
+        这种初始化方式有助于网络的收敛
+        """
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                # 卷积层使用kaiming初始化
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if hasattr(m, 'bias') and m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                # BN层的weight初始化为1，bias初始化为0
+                nn.init.constant_(m.weight, 1)
+                if hasattr(m, 'bias') and m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                # 全连接层使用正态分布初始化
+                nn.init.normal_(m.weight, 0, 0.01)
+                if hasattr(m, 'bias') and m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """前向传播"""
+        x = self.features(x)  # 特征提取
+        x = x.view(x.size(0), -1)  # 展平特征图
+        x = self.classifier(x)  # 分类
+        return x
 
 def parse_args():
     """解析命令行参数"""
@@ -114,7 +142,7 @@ def parse_args():
     
     # 模型相关参数
     parser.add_argument('--model-name', type=str, default=MODEL_CONFIG['model_name'],
-                      help='模型保存名称 (默认: best_model.pth，会自动添加.pth后缀)')
+                      help='模型保存名称 (默认: best_model.pth)')
     parser.add_argument('--model-dir', type=str, 
                       default=str(MODEL_CONFIG['model_save_dir']),
                       help='模型保存目录')
@@ -139,10 +167,26 @@ def train_model(
     device: str = 'cuda',
     model_save_path: Optional[Path] = None
 ) -> float:
-    """训练模并返回最佳验证准确率"""
+    """
+    训练模型并返回最佳验证准确率
+    
+    Args:
+        model: 待训练的模型
+        train_loader: 训练数据加载器
+        val_loader: 验证数据加载器
+        criterion: 损失函数
+        optimizer: 优化器
+        writer: TensorBoard写入器
+        num_epochs: 训练轮数
+        device: 训练设备
+        model_save_path: 模型保存路径
+    
+    Returns:
+        float: 最佳验证准确率
+    """
     model = model.to(device)
     best_val_acc = 0.0
-    patience = 15
+    patience = 15  # 早停耐心值
     patience_counter = 0
     
     # 使用余弦退火学习率调度器
@@ -156,6 +200,7 @@ def train_model(
     scaler = torch.cuda.amp.GradScaler()
     
     def get_prediction_confidence(outputs):
+        """计算预测的平均置信度"""
         probs = torch.softmax(outputs, dim=1)
         confidence, _ = torch.max(probs, dim=1)
         return confidence.mean().item()
@@ -175,16 +220,19 @@ def train_model(
                 outputs = model(images)
                 loss = criterion(outputs, labels)
             
+            # 反向传播和优化
             optimizer.zero_grad()
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
             
+            # 统计训练指标
             train_loss += loss.item()
             _, predicted = torch.max(outputs.data, 1)
             train_total += labels.size(0)
             train_correct += (predicted == labels).sum().item()
         
+        # 计算训练集指标
         train_acc = 100 * train_correct / train_total
         avg_train_loss = train_loss / len(train_loader)
         
@@ -209,13 +257,14 @@ def train_model(
                 val_total += labels.size(0)
                 val_correct += (predicted == labels).sum().item()
         
+        # 计算验证集指标
         val_acc = 100 * val_correct / val_total
         avg_val_loss = val_loss / len(val_loader)
         
         # 更新学习率
         scheduler.step()
         
-        # 记录指标
+        # 记录训练指标到TensorBoard
         writer.add_scalar('Loss/Train', avg_train_loss, epoch)
         writer.add_scalar('Loss/Validation', avg_val_loss, epoch)
         writer.add_scalar('Accuracy/Train', train_acc, epoch)
@@ -228,6 +277,7 @@ def train_model(
         writer.add_scalar('Confidence/Train', train_confidence, epoch)
         writer.add_scalar('Confidence/Validation', val_confidence, epoch)
         
+        # 打印训练信息
         print(f'Epoch [{epoch+1}/{num_epochs}]')
         print(f'Train Loss: {avg_train_loss:.4f}, Train Acc: {train_acc:.2f}%')
         print(f'Val Loss: {avg_val_loss:.4f}, Val Acc: {val_acc:.2f}%')
@@ -252,24 +302,8 @@ def train_model(
     
     return best_val_acc
 
-class LabelSmoothingLoss(nn.Module):
-    """标签平滑损失函数"""
-    def __init__(self, classes, smoothing=0.0, dim=-1):
-        super().__init__()
-        self.confidence = 1.0 - smoothing
-        self.smoothing = smoothing
-        self.cls = classes
-        self.dim = dim
-
-    def forward(self, pred, target):
-        pred = pred.log_softmax(dim=self.dim)
-        with torch.no_grad():
-            true_dist = torch.zeros_like(pred)
-            true_dist.fill_(self.smoothing / (self.cls - 1))
-            true_dist.scatter_(1, target.data.unsqueeze(1), self.confidence)
-        return torch.mean(torch.sum(-true_dist * pred, dim=self.dim))
-
 def main():
+    """主函数"""
     args = parse_args()
     
     # 设置随机种子和设备
@@ -278,7 +312,7 @@ def main():
         torch.cuda.manual_seed(args.seed)
     device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
     
-    # 创建TensorBoard writer
+    # 创建TensorBoard writer用于可视化
     writer = SummaryWriter()
     
     # 加载数据集
@@ -310,25 +344,16 @@ def main():
     
     # 创建模型和优化器
     model = SignLanguageResNet().to(device)
-    criterion = nn.CrossEntropyLoss()  # 使用普通的交叉熵损失
+    criterion = nn.CrossEntropyLoss()  # 使用交叉熵损失
     optimizer = optim.Adam(  # 使用Adam优化器
         model.parameters(), 
         lr=args.lr,
-        weight_decay=MODEL_CONFIG['weight_decay']
+        weight_decay=MODEL_CONFIG['weight_decay']  # L2正则化
     )
     
-    # 使用余弦退火学习率调度器
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(
-        optimizer,
-        T_max=args.epochs,
-        eta_min=1e-6
-    )
-    
-    # 确保模型保存目录存在
+    # 模型保存
     model_save_dir = Path(args.model_dir)
     model_save_dir.mkdir(parents=True, exist_ok=True)
-    
-    # 确保模型文件名有.pth后缀
     model_name = args.model_name
     if not model_name.endswith('.pth'):
         model_name += '.pth'
